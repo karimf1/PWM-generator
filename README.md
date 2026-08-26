@@ -39,9 +39,9 @@ tools/vcd2ascii.py sim/build/tb_deadtime.vcd tb_deadtime pwm_raw,pwm_h,pwm_l 150
 | `rtl/deadtime.v` | complementary outputs + dead-time FSM | ✅ built, verified |
 | `rtl/pwm_counter.v` | counter + compare, `update` pulse | ✅ built, verified |
 | `rtl/pwm_regs.v` | register file, shadow buffering | ✅ built, verified |
-| `rtl/pwm_top.v` | integration, fault synchronizer | not yet built |
+| `rtl/pwm_top.v` | integration, fault synchronizer | ✅ built, verified |
 
-Three modules, 142 lines of RTL. The testbenches are 908 lines. That ratio is
+Four modules, 207 lines of RTL. The testbenches are 1324 lines. That ratio is
 not an accident — see [Verification](#verification).
 
 ## Quickstart
@@ -61,10 +61,10 @@ exits nonzero. To look at a waveform:
 make -C sim wave TB=tb_deadtime
 ```
 
-To soak the randomized tests harder:
+To run every randomized test long, over four seeds:
 
 ```bash
-cd sim && vvp build/tb_deadtime.vvp +cycles=400000 +seed=beef
+make -C sim soak
 ```
 
 ## How it works
@@ -174,9 +174,48 @@ interlock), `en` = 0, `force_off` = 1 (gates held off until software explicitly
 releases them). So `CTRL` does not read back as zero after reset. That is
 intentional — the safe state of an output-disable bit is asserted.
 
+### pwm_top — the fault path
+
+Three things live at this level.
+
+**A 2-FF synchroniser on the fault input.** `fault_n` is asynchronous. An async
+signal driving FSM logic directly can be sampled mid-transition by different
+flops in different states, leaving the FSM somewhere illegal. The synchroniser
+resets to *tripped*, so the gates are off out of reset and stay off until a
+healthy `fault_n` has propagated.
+
+**Recovery waits for a period boundary.** A trip blanks the gates immediately;
+re-arming happens only on the next `update`. Restarting mid-period is not a
+shoot-through risk — `deadtime.v` serves a full dead time leaving `S_FAULT`
+whatever happens — it would just produce a first pulse of arbitrary width.
+
+**A disabled timer drives nothing.** `en = 0` forces both gates off (coast)
+rather than parking the low side on (brake). Braking a motor is a deliberate
+act, not what "stopped" should mean. So `en` and `force_off` are genuinely
+different controls: `en = 0` stops the counter *and* the outputs, while
+`force_off = 1` leaves the counter running and blanks the outputs, so clearing
+it resumes in step with the period.
+
+```
+         0    5    10   15   20   25 ...  75   80   85   90
+         |----|----|----|----|----|--     |----|----|----|--
+fault_n  ▔▔▔▔▔▔▔▔▔▔▔▔▔________________ ... ______▔▔▔▔▔▔▔▔▔▔▔
+update   __▔__________________________ ... ___▔______________
+pwm_h    _________▔▔▔▔▔▔______________ ... _______________▔▔▔
+pwm_l    ▔▔▔▔▔________________________ ... __________________
+              ^        ^                       ^         ^
+              |        |                       |         |
+              |        gates dark 2 clocks     |         dead time, then back
+              |        later -- synchroniser   |
+              pwm_h conducting                 re-arm waits for this update
+```
+
+*period = 40, duty = 20, dt = 4. Trimmed from the middle; the gates stay dark
+for the whole fault.*
+
 ## Verification
 
-142 lines of RTL, 908 lines of testbench. Plain Verilog has no `assert`, no
+207 lines of RTL, 1324 lines of testbench. Plain Verilog has no `assert`, no
 constrained-random and no classes, so the checkers are ordinary `always` blocks
 that run continuously through every test, and the randomization is an LFSR.
 
@@ -193,16 +232,28 @@ that run continuously through every test, and the randomization is an LFSR.
 | R1 | active config never changes on a cycle where `update` was low |
 | R2 | on every `update`, active config == last value written |
 | R3 | `en` / `force_off` track `CTRL` on the very next cycle |
+| T1 | `pwm_h` high cycles per period == expected, measured at the gate |
+| T2 | `pwm_l` high cycles per period == expected, measured at the gate |
+| T3 | cycles between `update` pulses == `period`, end to end |
 
-**Directed scenarios**: 38 checks across 16 scenarios for the dead-time FSM,
-26 across 12 for the counter, 29 across 10 for the registers — including 0%,
-100%, `duty > period`, `period` of 2/1/0, requests exactly `dt` long, 1-cycle
-requests, `dt = 0`, back-to-back edges, disable mid-period, fault mid-conduction,
-and reset mid-conduction.
+**Directed scenarios**: 140 checks across 51 scenarios — 38/16 for the dead-time
+FSM, 26/12 for the counter, 29/10 for the registers, 47/13 for the integrated
+design. Covering 0%, 100%, `duty > period`, `period` of 2/1/0, requests exactly
+`dt` long, 1-cycle requests, `dt = 0`, `dt` larger than the duty, back-to-back
+edges, disable mid-period, `force_off` mid-pulse, fault mid-conduction, fault
+asserted off the clock edge, and reset mid-conduction.
 
-**Randomized soak**: 2.4M random cycles of the dead-time FSM across six seeds,
-63,000 randomly configured PWM periods across seven seeds, 30,000 register
-commits across four seeds. All clean.
+The integration testbench drives the design the way software would — through
+the register port, with an asynchronous fault line — and measures the gate
+outputs, not internal signals. Its `period increased through the real register
+path` test is the one that proves the `pwm_regs` → `pwm_counter` contract
+actually holds in the assembled design: if it were broken, T3 would measure
+`period_new - period_old` instead of `period_new`.
+
+**Randomized soak**: `make -C sim soak` runs every randomized test long over
+four seeds — 2.4M dead-time cycles, 63,000 configured PWM periods, 30,000
+register commits, and randomized reconfiguration with random fault pulses at
+the top level. All clean.
 
 Every measurement is exact, not approximate. The window checkers latch the
 config in force at the start of each window and compare against that, so a
@@ -273,7 +324,12 @@ Named rather than hidden:
   timer's UG bit is for. Not built.
 - **16-bit write port, not AXI4-Lite.** A bus wrapper is a separate job.
 - **Simulation only.** No FPGA bring-up, no scope traces, no timing closure
-  against a real device.
+  against a real device. Simulation cannot produce metastability either — the
+  synchroniser is there for real silicon, and the testbench only proves the
+  logic does not care which part of the cycle a trip arrives in.
+- **The fault is not latched.** Clearing `fault_n` re-arms automatically at the
+  next period boundary. Real drives usually latch the trip so software must
+  acknowledge it, which stops a chattering fault producing repeated restarts.
 - **Single-phase half-bridge, edge-aligned.** Three-phase is three instances
   sharing one counter; center-aligned needs an up/down counter. Neither is built.
 
@@ -281,8 +337,8 @@ Named rather than hidden:
 
 ```
 pwm-deadtime/
-  rtl/    deadtime.v  pwm_counter.v  pwm_regs.v
-  tb/     tb_deadtime.v  tb_pwm_counter.v  tb_pwm_regs.v
+  rtl/    deadtime.v  pwm_counter.v  pwm_regs.v  pwm_top.v
+  tb/     tb_deadtime.v  tb_pwm_counter.v  tb_pwm_regs.v  tb_pwm_top.v
   sim/    Makefile                      # make / make bug / make wave
   tools/  vcd2ascii.py                  # renders the README waveforms
   docs/   deadtime_v1_buggy.v           # the broken first FSM, kept on purpose
@@ -290,5 +346,4 @@ pwm-deadtime/
 ```
 
 `PLAN.md` has the full design notes, the phase plan, and the interface contract
-between `pwm_regs` and `pwm_counter` that has to hold when they are wired
-together.
+between `pwm_regs` and `pwm_counter`.
