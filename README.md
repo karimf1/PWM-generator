@@ -1,2 +1,294 @@
-# PWM-generator
-A counter-based PWM core with runtime-configurable frequency and duty cycle, producing complementary high/low-side outputs with adjustable dead-time between them. 
+# pwm-deadtime
+
+A counter-based PWM timer with runtime-writable frequency and duty, glitch-free
+shadow registers, and a dead-time FSM that guarantees the high and low side of a
+half-bridge are never on at the same time — verified cycle-by-cycle.
+
+Verilog-2001, simulated with Icarus Verilog. No SystemVerilog, no vendor IP.
+
+```
+         0    5    10   15   20   25   30   35
+         |----|----|----|----|----|----|----|----
+pwm_raw  ________▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔____________
+pwm_h    _____________▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔____________
+pwm_l    _______▔_________________________▔▔▔▔▔▔▔
+                ^    ^                ^   ^
+                |    |                |   |
+                |    |                |   low side on, 5 clocks later
+                |    |                high side off the instant the request drops
+                |    turn-on delayed by dt = 5 clocks
+                reset dead time ends, low side takes over
+```
+
+Turn-**off** is immediate. Turn-**on** waits `dt` clocks. That asymmetry is the
+whole point: it is what stops both transistors in a half-bridge conducting at
+once and shorting the DC bus through them.
+
+Every waveform in this README is rendered from the VCD the testbenches actually
+produce, not drawn by hand — `tools/vcd2ascii.py` does the rendering, so any of
+them can be regenerated:
+
+```bash
+tools/vcd2ascii.py sim/build/tb_deadtime.vcd tb_deadtime pwm_raw,pwm_h,pwm_l 15000 405000 10000
+```
+
+## Status
+
+| module | what it does | state |
+|---|---|---|
+| `rtl/deadtime.v` | complementary outputs + dead-time FSM | ✅ built, verified |
+| `rtl/pwm_counter.v` | counter + compare, `update` pulse | ✅ built, verified |
+| `rtl/pwm_regs.v` | register file, shadow buffering | ✅ built, verified |
+| `rtl/pwm_top.v` | integration, fault synchronizer | not yet built |
+
+Three modules, 142 lines of RTL. The testbenches are 908 lines. That ratio is
+not an accident — see [Verification](#verification).
+
+## Quickstart
+
+```bash
+brew install icarus-verilog gtkwave
+```
+
+```bash
+make -C sim
+```
+
+That lints the RTL and runs all three testbenches. Each prints `TEST PASSED` or
+exits nonzero. To look at a waveform:
+
+```bash
+make -C sim wave TB=tb_deadtime
+```
+
+To soak the randomized tests harder:
+
+```bash
+cd sim && vvp build/tb_deadtime.vvp +cycles=400000 +seed=beef
+```
+
+## How it works
+
+```
+              +----------------+        +--------------+
+ wr/addr/data | pwm_regs       | period |              | pwm_raw  +----------+ pwm_h
+ ------------>| shadow buffers |------->| pwm_counter  |--------->| deadtime |------->
+              |                | duty   | (up counter  |          |   FSM    | pwm_l
+              +----------------+ dt     |  + compare)  |          |          |------->
+                    ^                   +--------------+          +----------+
+                    |  update (load enable)     |                      ^ dt
+                    +---------------------------+----------------------+
+```
+
+### pwm_counter — frequency and duty
+
+A free-running up-counter over `0 .. period-1`, so `f_pwm = f_clk / period`. At
+100 MHz with `period = 5000` that is 20 kHz, a realistic inverter switching
+frequency. `pwm_raw` is high for exactly `duty` cycles of every period.
+
+```
+         0    5    10   15   20   25   30
+         |----|----|----|----|----|----|----
+update   ___▔_________▔_________▔_________▔_
+pwm_raw  _____▔▔▔▔______▔▔▔▔______▔▔▔▔______
+```
+*period = 10, duty = 4. `update` marks the last cycle of each period.*
+
+Degenerate values are **defined, not illegal** — a register write can produce
+any of them and the counter must not be able to run away:
+
+| written | result |
+|---|---|
+| `duty = 0` | static low, 0%, no edges at all |
+| `duty >= period` | static high, 100%, no edges at all |
+| `period = 0` or `1` | wraps every cycle |
+| `period` reduced below current `cnt` | wraps on the next cycle, no run to 0xFFFF |
+
+### deadtime — the safety interlock
+
+A 4-state FSM with exactly one rule: **nothing turns on except by leaving
+`S_DEAD`, and `S_DEAD` always runs its counter to zero.** Normal switching,
+fault release and reset release all funnel through it, so every turn-on in the
+design is preceded by a full dead time by construction.
+
+```
+S_LO_ON : pwm_raw          -> S_DEAD, dt_cnt <= dt
+S_HI_ON : !pwm_raw         -> S_DEAD, dt_cnt <= dt
+S_DEAD  : dt_cnt <= 1      -> pwm_raw ? S_HI_ON : S_LO_ON
+          else                dt_cnt <= dt_cnt - 1
+S_FAULT : !force_off       -> S_DEAD, dt_cnt <= dt
+any     : force_off        -> S_FAULT          (highest priority)
+reset   :                  -> S_DEAD, both outputs low
+```
+
+`pwm_h` and `pwm_l` are decoded from `next_state` and **registered**, never
+decoded combinationally from `state`. A decode of state bits can glitch while
+they settle, and a glitch here is a shoot-through in the real bridge.
+
+Three consequences, all intentional:
+
+**A request narrower than the dead time is swallowed entirely.** Neither output
+turns on. This is why the achievable duty range shrinks as dead time grows.
+
+```
+         0    5    10   15   20
+         |----|----|----|----|---
+pwm_raw  __▔▔▔▔▔_________________
+pwm_h    ________________________   <- never rises
+pwm_l    ▔▔_____▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+```
+*A 5-clock request with dt = 5. The low side steps aside, nothing takes over,
+the low side comes back.*
+
+**Delivered on-time is `duty - dt` clocks, not `duty`.** Real inverters
+compensate for this in software. This one does not.
+
+**`dt = 0` still inserts one clock of dead time.** The floor is 1, not 0, on
+purpose: a safety interlock that can be configured to zero is not a safety
+interlock.
+
+### pwm_regs — why a shadow register
+
+Writes land in staging registers at any time. The active registers load from
+them only when `update` pulses, during the last cycle of a period. So a duty
+written in the middle of a pulse can never shorten the pulse already in flight —
+the output for the current period is whatever was committed at its start.
+
+`addr` is `byte_addr[3:2]`; translating a wider bus address is a wrapper's job,
+so the decode here is exact rather than aliased.
+
+| addr | byte | name | bits | buffered? |
+|---|---|---|---|---|
+| 0 | 0x0 | `PERIOD` | `[15:0]` counter wrap | shadowed |
+| 1 | 0x4 | `DUTY` | `[15:0]` compare | shadowed |
+| 2 | 0x8 | `DEADTIME` | `[7:0]` clocks | shadowed |
+| 3 | 0xC | `CTRL` | `[0]` en, `[1]` force_off | **immediate** |
+
+**`CTRL` is deliberately not shadowed.** Shadowing exists to stop a data change
+from corrupting a pulse in flight. Control that switches the output *off* must
+never be delayed by up to a period. Stop means stop.
+
+**Reset values are the safe end of every range, not zero:** `PERIOD` = max
+(slowest switching), `DUTY` = 0 (0% output), `DEADTIME` = max (most conservative
+interlock), `en` = 0, `force_off` = 1 (gates held off until software explicitly
+releases them). So `CTRL` does not read back as zero after reset. That is
+intentional — the safe state of an output-disable bit is asserted.
+
+## Verification
+
+142 lines of RTL, 908 lines of testbench. Plain Verilog has no `assert`, no
+constrained-random and no classes, so the checkers are ordinary `always` blocks
+that run continuously through every test, and the randomization is an LFSR.
+
+**Continuous checkers** — these run for the whole simulation, in every test:
+
+| | check |
+|---|---|
+| C1 | `pwm_h` and `pwm_l` are never both high. The headline invariant. |
+| C2 | a rise of either output is ≥ `dt` clocks after the *other* one fell |
+| C3 | both outputs low whenever reset is asserted |
+| P1 | cycles between `update` pulses == `period` — the off-by-one killer |
+| P2 | `pwm_raw` high cycles per period == `min(duty, period)` |
+| P3 | `cnt` stays inside `0 .. period-1` |
+| R1 | active config never changes on a cycle where `update` was low |
+| R2 | on every `update`, active config == last value written |
+| R3 | `en` / `force_off` track `CTRL` on the very next cycle |
+
+**Directed scenarios**: 38 checks across 16 scenarios for the dead-time FSM,
+26 across 12 for the counter, 29 across 10 for the registers — including 0%,
+100%, `duty > period`, `period` of 2/1/0, requests exactly `dt` long, 1-cycle
+requests, `dt = 0`, back-to-back edges, disable mid-period, fault mid-conduction,
+and reset mid-conduction.
+
+**Randomized soak**: 2.4M random cycles of the dead-time FSM across six seeds,
+63,000 randomly configured PWM periods across seven seeds, 30,000 register
+commits across four seeds. All clean.
+
+Every measurement is exact, not approximate. The window checkers latch the
+config in force at the start of each window and compare against that, so a
+config change lands in the right window with no fuzz and no skipped periods.
+
+## The bug the random test found
+
+Worth reading if you are going to build one of these.
+
+The obvious first cut of the dead-time FSM has *two* dead-time states,
+`S_DT_LH` and `S_DT_HL`, each of which returns early if the request is withdrawn
+mid-count. That shortcut looks safe, and for normal switching it is — the side
+that was already on never turned off, so there is nothing to interlock against.
+
+All 14 directed tests passed.
+
+The randomized stress failed in 495 cycles:
+
+```
+** FAIL  cyc=495  t=4950000 : C2 dead time too short before pwm_l rise
+```
+
+The fault-release and reset-release paths reuse the same dead-time state *after
+the other side has been conducting*, and there the early return turns a device
+on before its complement has stopped. This is the actual VCD, `dt = 10`:
+
+```
+           0    5    10   15
+           |----|----|----|-
+force_off  ____▔____________     <- one-cycle software trip
+pwm_raw    ▔▔▔▔____________▔
+pwm_h      ▔▔▔▔_____________     <- high side stops conducting here
+pwm_l      ______▔▔▔▔▔▔▔▔▔▔_     <- low side on 2 clocks later, not 10
+```
+
+The broken version is kept at `docs/deadtime_v1_buggy.v` so this is
+reproducible rather than retold:
+
+```bash
+make -C sim bug
+```
+
+The fix collapses both dead-time states into one non-abortable `S_DEAD`, so
+normal switching, fault release and reset release all take the same path. It is
+one state *smaller* than the version it replaced. Directed regressions for both
+paths are now in the testbench.
+
+Two things this is worth remembering for:
+
+1. Directed tests check the cases you thought of. The bug lived in a case that
+   only exists when two features interact — a fault arriving while the high side
+   happens to be conducting — and no reasonable directed test list contains it.
+   The LFSR found it in 577 cycles.
+2. The correct design was simpler than the incorrect one. The early-return
+   shortcut was an optimization protecting a case that did not need protecting.
+
+## Known limitations
+
+Named rather than hidden:
+
+- **Dead time reduces effective duty by `dt` clocks.** No software compensation.
+- **Dead-time resolution is one clock cycle.** No fine sub-clock delay line.
+- **Multi-register writes are not atomic.** `PERIOD` and `DUTY` commit
+  independently, so a write pair that straddles a period boundary can leave one
+  period running a mixed config — and if that mix has `duty >= period`, that is
+  one period at 100% duty. Workaround: change frequency with the timer stopped.
+  Fix: a `LOAD` commit bit that arms the shadow load, which is what the STM32
+  timer's UG bit is for. Not built.
+- **16-bit write port, not AXI4-Lite.** A bus wrapper is a separate job.
+- **Simulation only.** No FPGA bring-up, no scope traces, no timing closure
+  against a real device.
+- **Single-phase half-bridge, edge-aligned.** Three-phase is three instances
+  sharing one counter; center-aligned needs an up/down counter. Neither is built.
+
+## Repo layout
+
+```
+pwm-deadtime/
+  rtl/    deadtime.v  pwm_counter.v  pwm_regs.v
+  tb/     tb_deadtime.v  tb_pwm_counter.v  tb_pwm_regs.v
+  sim/    Makefile                      # make / make bug / make wave
+  tools/  vcd2ascii.py                  # renders the README waveforms
+  docs/   deadtime_v1_buggy.v           # the broken first FSM, kept on purpose
+  PLAN.md
+```
+
+`PLAN.md` has the full design notes, the phase plan, and the interface contract
+between `pwm_regs` and `pwm_counter` that has to hold when they are wired
+together.
