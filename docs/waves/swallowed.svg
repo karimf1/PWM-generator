@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="376" height="158" viewBox="0 0 376 158" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11">
+<text x="4" y="14" fill="#64748b" font-size="12" font-weight="600">Request of 5 clocks with dt = 5: swallowed, neither gate turns on</text>
+<rect x="118" y="36" width="11" height="106" fill="#f59e0b" opacity="0.16"/>
+<rect x="129" y="36" width="11" height="106" fill="#f59e0b" opacity="0.16"/>
+<rect x="140" y="36" width="11" height="106" fill="#f59e0b" opacity="0.16"/>
+<rect x="151" y="36" width="11" height="106" fill="#f59e0b" opacity="0.16"/>
+<rect x="162" y="36" width="11" height="106" fill="#f59e0b" opacity="0.16"/>
+<line x1="96" y1="36" x2="96" y2="140" stroke="#cbd5e1" stroke-width="0.5" opacity="0.5"/>
+<text x="98" y="32" fill="#64748b" font-size="9">0</text>
+<line x1="151" y1="36" x2="151" y2="140" stroke="#cbd5e1" stroke-width="0.5" opacity="0.5"/>
+<text x="153" y="32" fill="#64748b" font-size="9">5</text>
+<line x1="206" y1="36" x2="206" y2="140" stroke="#cbd5e1" stroke-width="0.5" opacity="0.5"/>
+<text x="208" y="32" fill="#64748b" font-size="9">10</text>
+<line x1="261" y1="36" x2="261" y2="140" stroke="#cbd5e1" stroke-width="0.5" opacity="0.5"/>
+<text x="263" y="32" fill="#64748b" font-size="9">15</text>
+<line x1="316" y1="36" x2="316" y2="140" stroke="#cbd5e1" stroke-width="0.5" opacity="0.5"/>
+<text x="318" y="32" fill="#64748b" font-size="9">20</text>
+<text x="86" y="66" fill="#64748b" text-anchor="end">pwm_raw</text>
+<polyline points="96,70.5 107,70.5 118,70.5 118,51.5 129,51.5 140,51.5 151,51.5 162,51.5 173,51.5 173,70.5 184,70.5 195,70.5 206,70.5 217,70.5 228,70.5 239,70.5 250,70.5 261,70.5 272,70.5 283,70.5 294,70.5 305,70.5 316,70.5 327,70.5 338,70.5 349,70.5 360,70.5" fill="none" stroke="#2563eb" stroke-width="1.8" stroke-linejoin="round"/>
+<text x="86" y="100" fill="#64748b" text-anchor="end">pwm_h</text>
+<polyline points="96,104.5 107,104.5 118,104.5 129,104.5 140,104.5 151,104.5 162,104.5 173,104.5 184,104.5 195,104.5 206,104.5 217,104.5 228,104.5 239,104.5 250,104.5 261,104.5 272,104.5 283,104.5 294,104.5 305,104.5 316,104.5 327,104.5 338,104.5 349,104.5 360,104.5" fill="none" stroke="#2563eb" stroke-width="1.8" stroke-linejoin="round"/>
+<text x="86" y="134" fill="#64748b" text-anchor="end">pwm_l</text>
+<polyline points="96,119.5 107,119.5 118,119.5 118,138.5 129,138.5 140,138.5 151,138.5 162,138.5 173,138.5 173,119.5 184,119.5 195,119.5 206,119.5 217,119.5 228,119.5 239,119.5 250,119.5 261,119.5 272,119.5 283,119.5 294,119.5 305,119.5 316,119.5 327,119.5 338,119.5 349,119.5 360,119.5" fill="none" stroke="#2563eb" stroke-width="1.8" stroke-linejoin="round"/>
+</svg>

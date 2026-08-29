@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="552" height="158" viewBox="0 0 552 158" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11">
+<text x="4" y="14" fill="#64748b" font-size="12" font-weight="600">Edge-aligned: sawtooth carrier, period 10 = 10 clocks, duty 4</text>
+<line x1="96" y1="36" x2="96" y2="140" stroke="#cbd5e1" stroke-width="0.5" opacity="0.5"/>
+<text x="98" y="32" fill="#64748b" font-size="9">0</text>
+<line x1="151" y1="36" x2="151" y2="140" stroke="#cbd5e1" stroke-width="0.5" opacity="0.5"/>
+<text x="153" y="32" fill="#64748b" font-size="9">5</text>
+<line x1="206" y1="36" x2="206" y2="140" stroke="#cbd5e1" stroke-width="0.5" opacity="0.5"/>
+<text x="208" y="32" fill="#64748b" font-size="9">10</text>
+<line x1="261" y1="36" x2="261" y2="140" stroke="#cbd5e1" stroke-width="0.5" opacity="0.5"/>
+<text x="263" y="32" fill="#64748b" font-size="9">15</text>
+<line x1="316" y1="36" x2="316" y2="140" stroke="#cbd5e1" stroke-width="0.5" opacity="0.5"/>
+<text x="318" y="32" fill="#64748b" font-size="9">20</text>
+<line x1="371" y1="36" x2="371" y2="140" stroke="#cbd5e1" stroke-width="0.5" opacity="0.5"/>
+<text x="373" y="32" fill="#64748b" font-size="9">25</text>
+<line x1="426" y1="36" x2="426" y2="140" stroke="#cbd5e1" stroke-width="0.5" opacity="0.5"/>
+<text x="428" y="32" fill="#64748b" font-size="9">30</text>
+<line x1="481" y1="36" x2="481" y2="140" stroke="#cbd5e1" stroke-width="0.5" opacity="0.5"/>
+<text x="483" y="32" fill="#64748b" font-size="9">35</text>
+<text x="86" y="66" fill="#64748b" text-anchor="end">cnt</text>
+<polyline points="96,57.8 107,55.7 118,53.6 129,51.5 140,70.5 151,68.4 162,66.3 173,64.2 184,62.1 195,59.9 206,57.8 217,55.7 228,53.6 239,51.5 250,70.5 261,68.4 272,66.3 283,64.2 294,62.1 305,59.9 316,57.8 327,55.7 338,53.6 349,51.5 360,70.5 371,68.4 382,66.3 393,64.2 404,62.1 415,59.9 426,57.8 437,55.7 448,53.6 459,51.5 470,70.5 481,68.4 492,66.3 503,64.2 514,62.1 525,59.9" fill="none" stroke="#7c3aed" stroke-width="1.6" stroke-linejoin="round"/>
+<text x="99" y="50" fill="#64748b" font-size="9" opacity="0.75">9</text>
+<text x="86" y="100" fill="#64748b" text-anchor="end">update</text>
+<polyline points="96,104.5 107,104.5 118,104.5 129,104.5 129,85.5 140,85.5 140,104.5 151,104.5 162,104.5 173,104.5 184,104.5 195,104.5 206,104.5 217,104.5 228,104.5 239,104.5 239,85.5 250,85.5 250,104.5 261,104.5 272,104.5 283,104.5 294,104.5 305,104.5 316,104.5 327,104.5 338,104.5 349,104.5 349,85.5 360,85.5 360,104.5 371,104.5 382,104.5 393,104.5 404,104.5 415,104.5 426,104.5 437,104.5 448,104.5 459,104.5 459,85.5 470,85.5 470,104.5 481,104.5 492,104.5 503,104.5 514,104.5 525,104.5 536,104.5" fill="none" stroke="#2563eb" stroke-width="1.8" stroke-linejoin="round"/>
+<text x="86" y="134" fill="#64748b" text-anchor="end">pwm_raw</text>
+<polyline points="96,138.5 107,138.5 118,138.5 129,138.5 140,138.5 151,138.5 151,119.5 162,119.5 173,119.5 184,119.5 195,119.5 195,138.5 206,138.5 217,138.5 228,138.5 239,138.5 250,138.5 261,138.5 261,119.5 272,119.5 283,119.5 294,119.5 305,119.5 305,138.5 316,138.5 327,138.5 338,138.5 349,138.5 360,138.5 371,138.5 371,119.5 382,119.5 393,119.5 404,119.5 415,119.5 415,138.5 426,138.5 437,138.5 448,138.5 459,138.5 470,138.5 481,138.5 481,119.5 492,119.5 503,119.5 514,119.5 525,119.5 525,138.5 536,138.5" fill="none" stroke="#2563eb" stroke-width="1.8" stroke-linejoin="round"/>
+</svg>
