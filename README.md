@@ -3,7 +3,7 @@
 A PWM timer for a MOSFET half-bridge, in Verilog-2001. Runtime-writable
 frequency and duty, glitch-free shadow registers, edge- and center-aligned
 carriers, a three-phase variant, and a dead-time FSM that guarantees the high
-and low side of a leg are never on at the same time — verified cycle-by-cycle.
+and low side of a leg are never on at the same time.
 
 ![Dead-time insertion](docs/waves/deadtime.svg)
 
@@ -12,11 +12,7 @@ that gap. It exists because the two transistors in a half-bridge sit directly
 across the DC bus: if the one turning on gets there before the one turning off
 has left, they short the bus through themselves, and neither survives it.
 
-Every figure in this README is rendered from the VCD the testbenches actually
-produce. `tools/vcd2svg.py` does the rendering and `make -C sim waves`
-regenerates all of them, so nothing here is drawn by hand or taken on trust.
-
-## Status
+## Key features
 
 | module | what it does | lines |
 |---|---|---|
@@ -27,28 +23,22 @@ regenerates all of them, so nothing here is drawn by hand or taken on trust.
 | `rtl/pwm_top.v` | single-phase: integration, fault synchroniser | 68 |
 | `rtl/pwm3_top.v` | three-phase: one carrier, three legs | 102 |
 
-357 lines of RTL. The testbenches are 1840 lines. That ratio is not an
-accident — see [Verification](#verification).
+- **A dead-time interlock that cannot be bypassed**, including on the fault-release
+  and reset-release paths, and with a floor of one clock even when `dt = 0`.
+- **Glitch-free reconfiguration.** Period, duty, dead time and counting mode are
+  double-buffered and commit on a period boundary; the output bits are not.
+- **Both carrier shapes** from one counter — sawtooth for edge-aligned,
+  triangle for center-aligned — with every degenerate register value defined
+  rather than illegal.
+- **A three-phase variant sharing a single carrier**, so the line-to-line
+  voltage stays clean.
+- **A fault input that resets to tripped**, through a two-flop synchroniser, so
+  the gates are dark out of reset until software explicitly releases them.
+- **Registered gate outputs**, decoded from the FSM's *next* state rather than
+  combinationally from its current one.
 
-## Quickstart
-
-```bash
-brew install icarus-verilog gtkwave
-```
-
-```bash
-make -C sim
-```
-
-Lints the RTL and runs all five testbenches. Each prints `TEST PASSED` or exits
-nonzero. Then:
-
-```bash
-make -C sim soak
-```
-
-runs every randomized test long, over four seeds. `make -C sim wave TB=tb_pwm_top`
-opens a VCD in GTKWave; `make -C sim bug` reproduces a bug described below.
+357 lines of RTL. Every figure below is rendered from the waveforms the design
+actually produces, not drawn by hand.
 
 ## How it works
 
@@ -108,6 +98,18 @@ S_FAULT : !force_off       -> S_DEAD, dt_cnt <= dt
 any     : force_off        -> S_FAULT          (highest priority)
 reset   :                  -> S_DEAD, both outputs low
 ```
+
+**Why one dead-time state and not two.** The obvious first cut has *two* —
+`S_DT_LH` and `S_DT_HL`, one per direction — each returning early if the request
+is withdrawn mid-count. For normal switching that shortcut is safe: the side
+that was already on never turned off, so there is nothing to interlock against.
+But the fault-release and reset-release paths re-enter the same state *after the
+other side has been conducting*, and there an early return turns a device on
+before its complement has stopped. Collapsing both into one non-abortable
+`S_DEAD` removes the case entirely — and the safe version is one state
+**smaller** than the clever one. The early return was an optimisation protecting
+a case that did not need protecting. The broken first version is kept in
+[`docs/deadtime_v1_buggy.v`](docs/) rather than deleted.
 
 `pwm_h` and `pwm_l` are decoded from `next_state` and **registered**, never
 decoded combinationally from `state`. A decode of state bits can glitch while
@@ -195,102 +197,6 @@ differs. One `DEADTIME` and one fault input serve all three legs: a bridge fault
 kills the bridge, and dead time is a property of the transistors rather than of
 which leg they sit in.
 
-## Verification
-
-357 lines of RTL, 1840 lines of testbench. Plain Verilog has no `assert`, no
-constrained-random and no classes, so the checkers are ordinary `always` blocks
-that run continuously through every test, and the randomization is an LFSR.
-
-**Continuous checkers** — these run for the whole simulation, in every test:
-
-| | check |
-|---|---|
-| C1 | `pwm_h` and `pwm_l` are never both high. The headline invariant. |
-| C2 | a rise of either output is ≥ `dt` clocks after the *other* one fell |
-| C3 | both outputs low whenever reset is asserted |
-| P1 | cycles between `update` pulses == `period` — the off-by-one killer |
-| P2 | `pwm_raw` high cycles per period == `min(duty, period)` |
-| P3 | `cnt` stays inside `0 .. period-1` |
-| R1 | active config never changes on a cycle where `update` was low |
-| R2 | on every `update`, active config == last value written |
-| R3 | `en` / `force_off` track `CTRL` on the very next cycle |
-| T1 | `pwm_h` high cycles per period == expected, measured at the gate |
-| T2 | `pwm_l` high cycles per period == expected, measured at the gate |
-| T3 | cycles between `update` pulses == `period`, end to end |
-
-In the three-phase testbench C1, C2, T1 and T2 run once per leg.
-
-**Directed scenarios**: 214 checks across 65 scenarios — 0%, 100%,
-`duty > period`, `period` of 2/1/0, requests exactly `dt` long, 1-cycle
-requests, `dt = 0`, `dt` larger than the duty, back-to-back edges, disable
-mid-period, `force_off` mid-pulse, fault mid-conduction, fault asserted off the
-clock edge, reset mid-conduction, both counting modes, and three legs at 0% /
-50% / 100% simultaneously.
-
-The integration testbenches drive the design the way software would — through
-the register port, with an asynchronous fault line — and measure the **gate
-outputs**, not internal signals. The three-phase one closes by walking the
-duties around a sine table 120° apart in center-aligned mode, which is what a
-drive's control loop actually does, checking every phase against its own
-commanded duty at every step.
-
-**Randomized soak**: `make -C sim soak` runs every randomized test long over
-four seeds. Beyond that, the design has been soaked over 50 long runs across ten
-seeds and all five testbenches, plus 15 seeds at 4000 random reconfigurations
-each on both integration testbenches. All clean.
-
-## The bugs the random tests found
-
-Worth reading if you are going to build one of these. The randomized tests found
-four bugs. One was in the RTL. Three were in the checkers — and every one of
-those blamed the design for a dead time that was actually correct.
-
-### The RTL bug: a shoot-through on the fault path
-
-The obvious first cut of the dead-time FSM has *two* dead-time states,
-`S_DT_LH` and `S_DT_HL`, each returning early if the request is withdrawn
-mid-count. That shortcut looks safe, and for normal switching it is — the side
-that was already on never turned off, so there is nothing to interlock against.
-
-All 14 directed tests passed. The randomized stress failed at cycle 495:
-
-```
-** FAIL  cyc=495  t=4950000 : C2 dead time too short before pwm_l rise
-```
-
-The fault-release and reset-release paths reuse the same dead-time state *after
-the other side has been conducting*, and there the early return turns a device
-on before its complement has stopped — two clocks apart with `dt = 10`.
-
-The fix collapses both dead-time states into one non-abortable `S_DEAD`. It is
-one state **smaller** than the version it replaced: the early return was an
-optimisation protecting a case that did not need protecting. The broken version
-is kept so this is reproducible rather than retold:
-
-```bash
-make -C sim bug
-```
-
-### The checker bugs: three ways to be one cycle wrong
-
-All three were the testbench modelling the register interface slightly wrong,
-and all three surfaced only under long random reconfiguration:
-
-1. The dead-time shadow model committed on `update` directly. But `update` is
-   **combinational** in `pwm_counter`, so the value visible at a negedge is what
-   registers latch at the *next* posedge — the model ran a full cycle ahead.
-2. It also read the newly written value rather than the one the load side sees.
-   A write landing on the update edge commits at the *following* boundary, which
-   is the anti-tearing property `pwm_regs` is built to provide.
-3. C2 recorded the `dt` in force *after* the edge the FSM enters `S_DEAD` on.
-   The FSM latches it from *before* that edge, and a shadow load on the same
-   edge changes it in between.
-
-The lesson that generalises: a checker that models a synchronous interface has
-to model *when* things take effect, not just what they become. Getting that
-wrong produces confident, specific, entirely false accusations — and they look
-exactly like real bugs.
-
 ## Known limitations
 
 Named rather than hidden:
@@ -301,33 +207,64 @@ Named rather than hidden:
   independently, so a write pair that straddles a period boundary can leave one
   period running a mixed config — and if that mix has `duty >= period`, that is
   one period at 100% duty. Workaround: change frequency with the timer stopped.
-  Fix: a `LOAD` commit bit that arms the shadow load, which is what the STM32
-  timer's UG bit is for. Not built.
 - **The fault is not latched.** Clearing `fault_n` re-arms automatically at the
   next period boundary. Real drives usually latch the trip so software must
   acknowledge it, which stops a chattering fault causing repeated restarts.
 - **16-bit write port, not AXI4-Lite.** A bus wrapper is a separate job.
 - **Simulation only.** No FPGA bring-up, no scope traces, no timing closure
-  against a real device. Simulation cannot produce metastability either — the
-  synchroniser is there for real silicon, and the testbench only proves the
-  logic does not care which part of the cycle a trip arrives in.
+  against a real device. The synchroniser is there for real silicon; simulation
+  cannot produce metastability to exercise it.
 
-## Repo layout
+## Possible improvements
 
-```
-pwm-deadtime/
-  rtl/    deadtime.v  pwm_compare.v  pwm_counter.v
-          pwm_regs.v  pwm_top.v      pwm3_top.v
-  tb/     tb_deadtime.v  tb_pwm_counter.v  tb_pwm_regs.v
-          tb_pwm_top.v   tb_pwm3_top.v
-  sim/    Makefile                  # make / soak / waves / bug / wave / lint
-  tools/  vcd2svg.py                # VCD -> SVG, renders every README figure
-          vcd2ascii.py              # the same thing as text, for terminals
-          make_waves.sh             # regenerates docs/waves/ from the VCDs
-  docs/   waves/*.svg
-          deadtime_v1_buggy.v       # the broken first FSM, kept on purpose
-  PLAN.md
-```
+Roughly in order of how much they are worth doing.
+
+**1. A `LOAD` commit bit.** One bit in `CTRL` that arms the shadow load, so
+`PERIOD` and `DUTY` commit together on the next boundary instead of
+independently. This is what the STM32 timer's UG bit is for, and it closes the
+worst remaining hole: a frequency change that lands across a period boundary and
+produces one period at 100 % duty into a live bridge.
+
+**2. Latch the fault.** Add a sticky trip register that software must write to
+clear. A chattering current-sense comparator currently produces a restart per
+period; latched, it produces one trip and stays down until someone looks at it.
+Pair it with a status register so the cause is readable.
+
+**3. Dead-time compensation.** The delivered on-time is `duty - dt`. A drive
+loop can correct for that, but the correction depends on the sign of the phase
+current, which the timer does not know. Bringing a current-sign input in and
+adding `dt` back on the appropriate edge is the standard fix, and it is the
+difference between open-loop distortion at low modulation index and a clean
+sine.
+
+**4. An AXI4-Lite or APB wrapper.** The 16-bit write port is fine for a
+testbench and useless for dropping into a real SoC. The register map is already
+word-addressed, so this is a bus adapter rather than a redesign.
+
+**5. Sub-clock dead-time resolution.** At 100 MHz, one clock is 10 ns and a
+typical GaN half-bridge wants dead time resolved finer than that. A carry-chain
+or a DDR-output delay line would give fractional-cycle steps — at the cost of
+being device-specific, which is why it is not here.
+
+**6. Synchronous fault-to-gate path in hardware.** The trip currently costs two
+synchroniser clocks before the gates go dark. For a desat or overcurrent event
+that is a long time. An asynchronous combinational blank on the output
+enables — with the FSM still doing the clean recovery afterwards — would cut it
+to a gate delay. That is a deliberate trade of one safety property against
+another, which is why it deserves a decision rather than a default.
+
+**7. Per-leg fault inputs on the three-phase variant.** One fault kills the
+bridge today, which is correct for a shoot-through or a bus fault. A per-phase
+overcurrent is a different event and might justify a different response.
+
+**8. Phase-shifted carriers as an option.** The shared carrier is right for a
+motor drive. Interleaved converters want the opposite — deliberately offset
+carriers — and the counter already has everything needed to offer a per-channel
+phase offset.
+
+**9. FPGA bring-up.** Everything here is simulation. Getting it onto a board
+with a real half-bridge, a current probe and a scope is what would turn the
+dead-time claim from a property of the source into a measurement.
 
 `PLAN.md` has the full design notes, the phase plan, and the interface contract
 between `pwm_regs` and `pwm_counter`.
