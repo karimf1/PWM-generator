@@ -107,9 +107,7 @@ But the fault-release and reset-release paths re-enter the same state *after the
 other side has been conducting*, and there an early return turns a device on
 before its complement has stopped. Collapsing both into one non-abortable
 `S_DEAD` removes the case entirely — and the safe version is one state
-**smaller** than the clever one. The early return was an optimisation protecting
-a case that did not need protecting. The broken first version is kept in
-[`docs/deadtime_v1_buggy.v`](docs/) rather than deleted.
+**smaller** than the clever one.
 
 `pwm_h` and `pwm_l` are decoded from `next_state` and **registered**, never
 decoded combinationally from `state`. A decode of state bits can glitch while
